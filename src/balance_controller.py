@@ -1,9 +1,11 @@
+# src/balance_controller.py
+
 from __future__ import annotations
 from dataclasses import dataclass
 from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-from typing import Optional
+import warnings
 
 
 @dataclass
@@ -61,53 +63,34 @@ class BalanceController:
             left=round(left_scalar * 100), right=round(right_scalar * 100)
         )
 
+    def get_interface_name(self) -> str:
+        """
+        Returns the friendly name of the current default audio endpoint.
+        If the name cannot be determined, returns "Unknown Device".
 
-def parse_intensity(input_str: str) -> Optional[RightLeftVolumeIntensity]:
-    """
-    Parses a string of form "L/R" into a RightLeftVolumeIntensity.
-    Both L and R are treated as 0-100 percentages.
+        :return: Friendly name of the default audio endpoint (e.g., "Speakers (Realtek High Definition Audio)")
+        """
+        with warnings.catch_warnings():
+            # Suppress COM deprecation warnings
+            warnings.simplefilter("ignore", UserWarning)
 
-    :param input_str: e.g. "40/8"
-    :return: RightLeftVolumeIntensity or None if parsing fails
-    """
-    try:
-        left_str, right_str = input_str.split("/")
-        left_value = int(left_str)
-        right_value = int(right_str)
-        return RightLeftVolumeIntensity(left=left_value, right=right_value)
-    except (ValueError, AttributeError):
-        return None
+            # Get the default IMMDevice endpoint
+            default_device = AudioUtilities.GetSpeakers()
+            try:
+                # Get the endpoint ID
+                device_id = default_device.GetId()
+            except Exception:
+                return "Unknown Device"
 
+            # Find matching AudioDevice wrapper for friendly name
+            try:
+                all_devices = AudioUtilities.GetAllDevices()
+                for device in all_devices:
+                    if hasattr(device, "id") and device.id == device_id:
+                        # AudioDevice.FriendlyName property
+                        return device.FriendlyName
+            except Exception:
+                pass
 
-def main() -> None:
-    """
-    REPL loop for adjusting balance.
-    Displays previous → new balance on each valid input.
-    Exits when the user presses Enter on a blank line.
-    """
-    controller = BalanceController()
-    previous_intensity = controller.get_balance()
-    print(f"Previous balance: {previous_intensity.left}/{previous_intensity.right}")
-
-    while True:
-        user_input = input("Input (L/R): ").strip()
-        if not user_input:
-            print("Exiting.")
-            break
-
-        new_intensity = parse_intensity(user_input)
-        if new_intensity is None:
-            print("  ↳ Invalid format; please use 'L/R' with integers (e.g. '40/8').")
-            continue
-
-        print(
-            f"  ↳ Applying balance: "
-            f"{previous_intensity.left}/{previous_intensity.right} → "
-            f"{new_intensity.left}/{new_intensity.right}"
-        )
-        controller.set_balance(new_intensity)
-        previous_intensity = new_intensity
-
-
-if __name__ == "__main__":
-    main()
+            # Fallback to returning the raw device ID
+            return device_id
