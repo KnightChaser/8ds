@@ -10,11 +10,11 @@ A simple and easy-to-use Windows GUI tool to control headset left/right balance 
 - **Single-File Executable**: Packaged with PyInstaller into `8ds.exe`.
 
 ## Download
-Download Windows binary of `8ds` from [Releases](https://github.com/KnightChaser/8ds/releases).
+Download the Windows `8ds` binary from [Releases](https://github.com/KnightChaser/8ds/releases).
 
 ## Build
 
-1. Clone the repo and enter directory:
+1. Clone the repo and enter the directory:
 ```powershell
 git clone https://github.com/KnightChaser/8ds.git
 cd 8ds
@@ -34,12 +34,16 @@ pip install -r requirements.txt
 ```powershell
 .\build\8ds.exe
 ```
-(Or you can simply `python .\src\main_gui.py` for immediately execution without EXE packaging.)
+(Alternatively, simply `python .\src\main_gui.py` for immediate execution without EXE packaging.)
 
 ## Usage
 
-* `Interface` label shows your currently using audio endpoint.
+* `Interface` label shows the audio endpoint you are currently using.
 * `Left / Right` sliders adjust channel volumes when 8D is **`off`**.
 * `Enable 8D Audio` toggles auto-panning; sliders deactivate.
 * `8D Max (%)` slider sets the peak balance swing when 8D is **`on`**.
 
+## Contribution and license
+
+This is open source. Feel free to explore, modify, or improve the source code.
+Also, feel free to leave issues, add pull requests, or do something else in this repository!
