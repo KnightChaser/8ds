@@ -34,6 +34,7 @@ class BalanceController:
         # 8D mode state
         self._8d_thread = None
         self._8d_running = threading.Event()
+        self._8d_max_percent = 100         # Cap for 8D audio mode sound intensity (0~100)
 
     def set_balance(self, intensity: RightLeftVolumeIntensity) -> None:
         left_scalar = intensity.left / 100.0
@@ -61,9 +62,19 @@ class BalanceController:
             
             # map to [50-depth/2 ... 50+depth/2]
             half = depth_percent / 2.0
-            left = 50 + v * half
-            right = 100 - left
-            self.set_balance(RightLeftVolumeIntensity(int(left), int(right)))
+            raw_left = 50 + v * half
+            raw_right = 100 - raw_left
+            
+            # Apply max cap
+            left = raw_left * self._8d_max_percent / 100.0
+            right = raw_right * self._8d_max_percent / 100.0
+            self.set_balance(
+                RightLeftVolumeIntensity(
+                    left=int(left), 
+                    right=int(right)
+                )
+            )
+            
             t += interval
             time.sleep(interval)
 
@@ -88,6 +99,13 @@ class BalanceController:
         if self._8d_thread:
             self._8d_thread.join(timeout=0.1)
             self._8d_thread = None
+            
+    def set_8d_max_percent(self, max_percent: int) -> None:
+        """
+        Set the maximum sound intensity for 8D audio mode.
+        This value should be between 0 and 100.
+        """
+        self._8d_max_percent = max(0, min(100, max_percent))
 
     def get_interface_name(self) -> str:
         """

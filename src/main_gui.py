@@ -59,7 +59,7 @@ class BalanceApp(ttk.Frame):
         )
         self.right_value_label.grid(column=2, row=2, sticky="w")
 
-        # 8D Toggle
+        # 8D Toggle and max-cap slider
         self.toggle_button = ttk.Button(
             self, text="Enable 8D Audio", 
             command=self.toggle_8d_mode
@@ -74,11 +74,27 @@ class BalanceApp(ttk.Frame):
 
         self.mode_indicator = ttk.Label(self, text="8D Audio OFF", foreground="red")
         self.mode_indicator.grid(column=2, row=3, sticky="w")
+        
+        # Max-cap slider for 8D audio mode (only active when 8D is enabled)
+        ttk.Label(self, text="Maximum sound intensity").grid(column=0, row=4, sticky="w")
+        self.max_percent_var = tk.IntVar(value=90)
+        self.max_percent_scale = ttk.Scale(
+            self,
+            from_=0,
+            to=100,
+            orient="horizontal",
+            variable=self.max_percent_var,
+            command=self.on_max_percent_change,
+        )
+        self.max_percent_scale.grid(column=1, row=4, sticky="ew")
+        self.max_percent_value_label = ttk.Label(self, text="100")
+        self.max_percent_value_label.grid(column=2, row=4, sticky="w")
+        self.max_percent_scale.state(["disabled"])  # Initially disabled
 
         # Layout and pack...
         self.columnconfigure(1, weight=1)
         self.pack(fill="both", expand=True)
-        master.title("Audio Balance Controller with 8D Audio")
+        master.title("8ds: Audio balance controller")
 
     def on_slide(self, _event: str) -> None:
         """
@@ -88,8 +104,8 @@ class BalanceApp(ttk.Frame):
         right = self.right_var.get()
 
         # Update live labels
-        self.left_value_label.config(text=f"{str(left)} %")
-        self.right_value_label.config(text=f"{str(right)} %")
+        self.left_value_label.config(text=str(left))
+        self.right_value_label.config(text=str(right))
 
         # Apply to controller
         intensity = RightLeftVolumeIntensity(left=left, right=right)
@@ -102,9 +118,10 @@ class BalanceApp(ttk.Frame):
             self.toggle_button.config(text="Disable 8D Audio")
             self.mode_indicator.config(text="8D Audio ON", foreground="green")
             
-            # Disable manual sliders
+            # Disable manual sliders and enable max-cap slider
             self.left_scale.state(["disabled"])
             self.right_scale.state(["disabled"])
+            self.max_percent_scale.state(["!disabled"])
             self._8d_on = True
         else:
             # Turn 8D off
@@ -112,10 +129,19 @@ class BalanceApp(ttk.Frame):
             self.toggle_button.config(text="Enable 8D Audio")
             self.mode_indicator.config(text="8D Audio OFF", foreground="red")
             
-            # Re-enable sliders
+            # Re-enable sliders and disable max-cap slider
             self.left_scale.state(["!disabled"])
             self.right_scale.state(["!disabled"])
+            self.max_percent_scale.state(["disabled"])
             self._8d_on = False
+            
+    def on_max_percent_change(self, _event: str) -> None:
+        """
+        Called when the max-cap slider changes: updates label and controller.
+        """
+        max_percent = self.max_percent_var.get()
+        self.max_percent_value_label.config(text=str(max_percent))
+        self.controller.set_8d_max_percent(max_percent)
 
 def main() -> None:
     """
