@@ -15,6 +15,7 @@ class BalanceApp(ttk.Frame):
     def __init__(self, master: tk.Tk, controller: BalanceController) -> None:
         super().__init__(master, padding=20)
         self.controller = controller
+        self._8d_on = False         # Is 8D mode enabled?
 
         # Initialize previous intensity and interface name
         self.previous_intensity = self.controller.get_balance()
@@ -34,7 +35,7 @@ class BalanceApp(ttk.Frame):
             to=100,
             orient="horizontal",
             variable=self.left_var,
-            command=self.on_slide
+            command=self.on_slide,
         )
         self.left_scale.grid(column=1, row=1, sticky="ew")
         self.left_value_label = ttk.Label(self, text=str(self.previous_intensity.left))
@@ -49,16 +50,35 @@ class BalanceApp(ttk.Frame):
             to=100,
             orient="horizontal",
             variable=self.right_var,
-            command=self.on_slide
+            command=self.on_slide,
         )
         self.right_scale.grid(column=1, row=2, sticky="ew")
-        self.right_value_label = ttk.Label(self, text=str(self.previous_intensity.right))
+        self.right_value_label = ttk.Label(
+            self, 
+            text=str(self.previous_intensity.right)
+        )
         self.right_value_label.grid(column=2, row=2, sticky="w")
 
-        # Layout configuration
+        # 8D Toggle
+        self.toggle_button = ttk.Button(
+            self, text="Enable 8D Audio", 
+            command=self.toggle_8d_mode
+        )
+        self.toggle_button.grid(
+            column=0, 
+            row=3, 
+            columnspan=2, 
+            sticky="ew", 
+            pady=(10, 0)
+        )
+
+        self.mode_indicator = ttk.Label(self, text="8D Audio OFF", foreground="red")
+        self.mode_indicator.grid(column=2, row=3, sticky="w")
+
+        # Layout and pack...
         self.columnconfigure(1, weight=1)
         self.pack(fill="both", expand=True)
-        master.title("Audio Balance Controller")
+        master.title("Audio Balance Controller with 8D Audio")
 
     def on_slide(self, _event: str) -> None:
         """
@@ -75,6 +95,27 @@ class BalanceApp(ttk.Frame):
         intensity = RightLeftVolumeIntensity(left=left, right=right)
         self.controller.set_balance(intensity)
 
+    def toggle_8d_mode(self):
+        if not self._8d_on:
+            # Turn 8D on
+            self.controller.start_8d(rate_hz=0.1, depth_percent=90)
+            self.toggle_button.config(text="Disable 8D Audio")
+            self.mode_indicator.config(text="8D Audio ON", foreground="green")
+            
+            # Disable manual sliders
+            self.left_scale.state(["disabled"])
+            self.right_scale.state(["disabled"])
+            self._8d_on = True
+        else:
+            # Turn 8D off
+            self.controller.stop_8d()
+            self.toggle_button.config(text="Enable 8D Audio")
+            self.mode_indicator.config(text="8D Audio OFF", foreground="red")
+            
+            # Re-enable sliders
+            self.left_scale.state(["!disabled"])
+            self.right_scale.state(["!disabled"])
+            self._8d_on = False
 
 def main() -> None:
     """

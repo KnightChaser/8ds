@@ -1,67 +1,93 @@
 # src/balance_controller.py
 
-from __future__ import annotations
+import threading
+import time
+import math
+import warnings
 from dataclasses import dataclass
 from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-import warnings
 
 
 @dataclass
 class RightLeftVolumeIntensity:
     """
-    Holds independent left/right channel intensity values in the 0-100 (percent) range.
-    Values outside this range are clamped to [0, 100].
+    Represents left and right channel volume intensity as a percentage.
+    Values are clamped to the range [0, 100].
     """
 
     left: int
     right: int
 
-    def __post_init__(self) -> None:
-        # Ensure values are within 0–100
+    def __post_init__(self):
         object.__setattr__(self, "left", max(0, min(100, self.left)))
         object.__setattr__(self, "right", max(0, min(100, self.right)))
 
 
 class BalanceController:
-    """
-    Controls system-wide left/right volume balance on Windows via pycaw.
-    Channels: 0 = left, 1 = right. Values managed internally as scalars (0.0–1.0).
-    """
-
-    def __init__(self) -> None:
-        """
-        Initializes the Core Audio endpoint volume interface.
-        Raises on COM activation failure.
-        """
+    def __init__(self):
         speakers = AudioUtilities.GetSpeakers()
         interface = speakers.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
         self._endpoint_volume = cast(interface, POINTER(IAudioEndpointVolume))
 
-    def set_balance(self, intensity: RightLeftVolumeIntensity) -> None:
-        """
-        Applies a new left/right balance.
+        # 8D mode state
+        self._8d_thread = None
+        self._8d_running = threading.Event()
 
-        :param intensity: RightLeftVolumeIntensity with left/right in [0, 100]
-        """
+    def set_balance(self, intensity: RightLeftVolumeIntensity) -> None:
         left_scalar = intensity.left / 100.0
         right_scalar = intensity.right / 100.0
-
         self._endpoint_volume.SetChannelVolumeLevelScalar(0, left_scalar, None)
         self._endpoint_volume.SetChannelVolumeLevelScalar(1, right_scalar, None)
 
     def get_balance(self) -> RightLeftVolumeIntensity:
-        """
-        Retrieves the current left/right balance as percentages.
-
-        :return: RightLeftVolumeIntensity with left/right in [0, 100]
-        """
-        left_scalar = self._endpoint_volume.GetChannelVolumeLevelScalar(0)
-        right_scalar = self._endpoint_volume.GetChannelVolumeLevelScalar(1)
+        left_s = self._endpoint_volume.GetChannelVolumeLevelScalar(0)
+        right_s = self._endpoint_volume.GetChannelVolumeLevelScalar(1)
         return RightLeftVolumeIntensity(
-            left=round(left_scalar * 100), right=round(right_scalar * 100)
+            left=round(left_s * 100), right=round(right_s * 100)
         )
+
+    def _run_8d(self, rate_hz: float, depth_percent: int):
+        """
+        Internal loop: computes a sine wave at `rate_hz`, depth in percent,
+        centered at 50/50, and updates until stopped.
+        """
+        interval = 1.0 / (rate_hz * 50)  # 50 samples per cycle
+        t = 0.0
+        while self._8d_running.is_set():
+            # sine in [-1,1]
+            v = math.sin(2 * math.pi * rate_hz * t)
+            
+            # map to [50-depth/2 ... 50+depth/2]
+            half = depth_percent / 2.0
+            left = 50 + v * half
+            right = 100 - left
+            self.set_balance(RightLeftVolumeIntensity(int(left), int(right)))
+            t += interval
+            time.sleep(interval)
+
+    def start_8d(self, rate_hz: float = 0.2, depth_percent: int = 80) -> None:
+        """
+        Begin 8D auto-panning. rate_hz: how many full L->R->L cycles per second.
+        depth_percent: total L+R swing (0-100).
+        """
+        if self._8d_running.is_set():
+            return
+        self._8d_running.set()
+        self._8d_thread = threading.Thread(
+            target=self._run_8d, 
+            args=(rate_hz, depth_percent), 
+            daemon=True
+        )
+        self._8d_thread.start()
+
+    def stop_8d(self) -> None:
+        """Stop 8D auto-panning and leave last balance in place."""
+        self._8d_running.clear()
+        if self._8d_thread:
+            self._8d_thread.join(timeout=0.1)
+            self._8d_thread = None
 
     def get_interface_name(self) -> str:
         """
