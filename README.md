@@ -9,6 +9,9 @@ A simple and easy-to-use Windows GUI tool to control headset left/right balance 
 - **8D Intensity Cap**: Slider to cap maximum 8D effect, preventing jarring 100% swings.
 - **Single-File Executable**: Packaged with PyInstaller into `8ds.exe`.
 
+## Download
+Download Windows binary of `8ds` from [Releases](https://github.com/KnightChaser/8ds/releases).
+
 ## Build
 
 1. Clone the repo and enter directory:
