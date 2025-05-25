@@ -6,6 +6,7 @@ import math
 import warnings
 from dataclasses import dataclass
 from ctypes import cast, POINTER
+from typing import Optional
 from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
@@ -13,75 +14,113 @@ from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 @dataclass
 class RightLeftVolumeIntensity:
     """
-    Represents left and right channel volume intensity as a percentage.
-    Values are clamped to the range [0, 100].
+    Represents independent left/right channel volume intensities as percentages.
+
+    Attributes:
+        left_percent:  Left channel intensity in the range [0, 100].
+        right_percent: Right channel intensity in the range [0, 100].
     """
+    left_percent: int
+    right_percent: int
 
-    left: int
-    right: int
-
-    def __post_init__(self):
-        object.__setattr__(self, "left", max(0, min(100, self.left)))
-        object.__setattr__(self, "right", max(0, min(100, self.right)))
+    def __post_init__(self) -> None:
+        # Clamp to valid range
+        object.__setattr__(self, 'left_percent',  max(0, min(100, self.left_percent)))
+        object.__setattr__(self, 'right_percent', max(0, min(100, self.right_percent)))
 
 
 class BalanceController:
-    def __init__(self):
+    """
+    Wraps Windows Core Audio endpoint volume control for per-channel (L/R) balance,
+    plus an “8D” auto-panning mode that cycles balance in a sine wave pattern.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize the COM interface to the default audio endpoint.
+        """
         speakers = AudioUtilities.GetSpeakers()
-        interface = speakers.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        interface = speakers.Activate(
+            IAudioEndpointVolume._iid_, 
+            CLSCTX_ALL, 
+            None
+        )
         self._endpoint_volume = cast(interface, POINTER(IAudioEndpointVolume))
 
         # 8D mode state
-        self._8d_thread = None
+        self._8d_thread: Optional[threading.Thread] = None
         self._8d_running = threading.Event()
-        self._8d_max_percent = 100         # Cap for 8D audio mode sound intensity (0~100)
+        self._8d_max_percent: int = 100
 
     def set_balance(self, intensity: RightLeftVolumeIntensity) -> None:
-        left_scalar = intensity.left / 100.0
-        right_scalar = intensity.right / 100.0
+        """
+        Set left/right volume percentages immediately.
+
+        Args:
+            intensity: A RightLeftVolumeIntensity with values in [0, 100].
+        """
+        left_scalar = intensity.left_percent / 100.0
+        right_scalar = intensity.right_percent / 100.0
+
         self._endpoint_volume.SetChannelVolumeLevelScalar(0, left_scalar, None)
         self._endpoint_volume.SetChannelVolumeLevelScalar(1, right_scalar, None)
 
     def get_balance(self) -> RightLeftVolumeIntensity:
-        left_s = self._endpoint_volume.GetChannelVolumeLevelScalar(0)
-        right_s = self._endpoint_volume.GetChannelVolumeLevelScalar(1)
+        """
+        Query the current left/right volume percentages.
+
+        Returns:
+            A RightLeftVolumeIntensity reflecting the current endpoint balance.
+        """
+        left_scalar = self._endpoint_volume.GetChannelVolumeLevelScalar(0)
+        right_scalar = self._endpoint_volume.GetChannelVolumeLevelScalar(1)
         return RightLeftVolumeIntensity(
-            left=round(left_s * 100), right=round(right_s * 100)
+            left_percent=round(left_scalar * 100),
+            right_percent=round(right_scalar * 100),
         )
 
-    def _run_8d(self, rate_hz: float, depth_percent: int):
+    def _run_8d(self, rate_hz: float, depth_percent: int) -> None:
         """
-        Internal loop: computes a sine wave at `rate_hz`, depth in percent,
-        centered at 50/50, and updates until stopped.
+        Internal loop for 8D auto-panning: sweeps L↔R in a sine wave.
+
+        Args:
+            rate_hz: Number of full L→R→L cycles per second.
+            depth_percent: Peak-to-peak swing around center (0–100).
         """
-        interval = 1.0 / (rate_hz * 50)  # 50 samples per cycle
+        interval = 1.0 / (rate_hz * 50)  # 50 steps per cycle
         t = 0.0
+        half_depth = depth_percent / 2.0
+
         while self._8d_running.is_set():
             # sine in [-1,1]
             v = math.sin(2 * math.pi * rate_hz * t)
             
             # map to [50-depth/2 ... 50+depth/2]
-            half = depth_percent / 2.0
-            raw_left = 50 + v * half
-            raw_right = 100 - raw_left
-            
-            # Apply max cap
+            raw_left = 50.0 + v * half_depth
+            raw_right = 100.0 - raw_left
+
+            # apply max cap
             left = raw_left * self._8d_max_percent / 100.0
             right = raw_right * self._8d_max_percent / 100.0
+
+            # set balance
             self.set_balance(
                 RightLeftVolumeIntensity(
-                    left=int(left), 
-                    right=int(right)
+                    left_percent=int(left),
+                    right_percent=int(right)
                 )
             )
-            
+
             t += interval
             time.sleep(interval)
 
     def start_8d(self, rate_hz: float = 0.2, depth_percent: int = 80) -> None:
         """
-        Begin 8D auto-panning. rate_hz: how many full L->R->L cycles per second.
-        depth_percent: total L+R swing (0-100).
+        Enable 8D auto-panning in background.
+
+        Args:
+            rate_hz: Frequency of pan cycles (Hz).
+            depth_percent: Total left↔right swing (0–100).
         """
         if self._8d_running.is_set():
             return
@@ -94,47 +133,44 @@ class BalanceController:
         self._8d_thread.start()
 
     def stop_8d(self) -> None:
-        """Stop 8D auto-panning and leave last balance in place."""
+        """
+        Disable 8D auto-panning, leaving the last balance in place.
+        """
         self._8d_running.clear()
         if self._8d_thread:
             self._8d_thread.join(timeout=0.1)
             self._8d_thread = None
-            
+
     def set_8d_max_percent(self, max_percent: int) -> None:
         """
-        Set the maximum sound intensity for 8D audio mode.
-        This value should be between 0 and 100.
+        Adjust the upper cap for 8D intensity.
+
+        Args:
+            max_percent: New cap (0–100).
         """
         self._8d_max_percent = max(0, min(100, max_percent))
 
     def get_interface_name(self) -> str:
         """
-        Returns the friendly name of the current default audio endpoint.
-        If the name cannot be determined, returns "Unknown Device".
+        Return the friendly name of the default audio endpoint.
 
-        :return: Friendly name of the default audio endpoint (e.g., "Speakers (Realtek High Definition Audio)")
+        Returns:
+            e.g., "Speakers (Realtek High Definition Audio)" or "Unknown Device"
         """
         with warnings.catch_warnings():
-            # Suppress COM deprecation warnings
             warnings.simplefilter("ignore", UserWarning)
 
-            # Get the default IMMDevice endpoint
-            default_device = AudioUtilities.GetSpeakers()
+            device = AudioUtilities.GetSpeakers()
             try:
-                # Get the endpoint ID
-                device_id = default_device.GetId()
+                device_id = device.GetId()
             except Exception:
                 return "Unknown Device"
 
-            # Find matching AudioDevice wrapper for friendly name
             try:
-                all_devices = AudioUtilities.GetAllDevices()
-                for device in all_devices:
-                    if hasattr(device, "id") and device.id == device_id:
-                        # AudioDevice.FriendlyName property
-                        return device.FriendlyName
+                for dev in AudioUtilities.GetAllDevices():
+                    if getattr(dev, "id", None) == device_id:
+                        return dev.FriendlyName
             except Exception:
                 pass
 
-            # Fallback to returning the raw device ID
             return device_id
